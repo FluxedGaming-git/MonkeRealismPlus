@@ -92,6 +92,10 @@ namespace MonkeRealism
                         ConvertSteamVRMatrixToUnity(
                                 poses[i].mDeviceToAbsoluteTracking
                         );
+                
+                
+                //TODO: Fix issue where after a certain threshold, such as laying on your back so the tracker is flat, the rotation doesn't bug out and face the wrong direction
+                // If that didnt make sense, try it yourself and see what I mean
 
                 Quaternion rotation = matrix.rotation;
 
