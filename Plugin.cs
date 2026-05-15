@@ -1,235 +1,585 @@
-﻿using System;
+﻿using System.Globalization;
+using System.IO;
 using System.Reflection;
-using System.Collections;
 using BepInEx;
 using BepInEx.Configuration;
-using GorillaLocomotion;
-using GorillaNetworking;
 using Photon.Pun;
 using UnityEngine;
-using UnityEngine.Networking;
-using UnityEngine.XR.Interaction.Toolkit;
-using Utilla;
-using Utilla.Attributes;
+using UnityEngine.InputSystem;
+using Hashtable = ExitGames.Client.Photon.Hashtable;
 
 namespace MonkeRealism
 {
-    [ModdedGamemode]
-    [BepInDependency("org.legoandmars.gorillatag.utilla", "1.5.0")]
-
-    //Incompatibilities
-    [BepInIncompatibility("com.zloth.recroomrig")]
-    [BepInIncompatibility("Graze.BodyEstimation")] 
-    [BepInIncompatibility("Graze.Bodytracking")] 
-    [BepInIncompatibility("com.graze.gorillatag.analogturn")]
-    [BepInIncompatibility("Graze.AnalogTurn-CI")]
-    [BepInIncompatibility("Graze.AnalogTurn-GC")]
-
-    [BepInPlugin(PluginInfo.GUID, PluginInfo.Name, PluginInfo.Version)]
+    [BepInPlugin(Constants.Guid, Constants.Name, Constants.Version)]
     public class Plugin : BaseUnityPlugin
     {
-        public ConfigEntry<string> trackerName;
-        public ConfigEntry<bool> trackerSerialDebug;
-        bool inRoom;
-        float hipYRotationOffset = 0f;
-        private float recenterHoldTime = 0f;
-        private const float recenterThreshold = 4f;
+        private const float  BorderSpeed = 0.2f;
+        private const float  BorderWidth = 3f;
+        private const int    BorderSteps = 24;
+        public static Plugin Instance;
+
+        private AudioClip PressSound, CalibrateSound;
+
+        private Font titleFont, mainFont;
+
+        private bool playedCalibrationSound;
+
+        private static readonly Color   ColBackground  = new Color(0.07f, 0.07f, 0.09f, 0.97f);
+        private static readonly Color   ColSurface     = new Color(0.12f, 0.12f, 0.16f, 1f);
+        private static readonly Color   ColSelected    = new Color(0.20f, 0.55f, 1.00f, 1f);
+        private static readonly Color   ColText        = new Color(0.92f, 0.92f, 0.96f, 1f);
+        private static readonly Color   ColSubtext     = new Color(0.55f, 0.55f, 0.65f, 1f);
+        private static readonly Color   ColAccent1     = new Color(0.20f, 0.70f, 1.00f, 1f);
+        private static readonly Color   ColAccent2     = new Color(0.70f, 0.30f, 1.00f, 1f);
+        private static readonly Color   ColAccentHover = new Color(0.30f, 0.80f, 1.00f, 1f);
+        private                 Color[] borderColors;
+
+        private float  borderPhase;
+        private Rect[] borderRects;
+
+        private Texture2D[] borderTextures;
+        private GUIStyle    buttonStyle;
+
+        private bool               calibrating;
+        private float              calibrationTimer;
+        private int                displayedCountdown = 3;
+        private GUIStyle           labelSmallStyle;
+        private GUIStyle           labelStyle;
+        private ConfigEntry<float> offsetW;
+        private ConfigEntry<float> offsetX;
+        private ConfigEntry<float> offsetY;
+        private ConfigEntry<float> offsetZ;
+        private GUIStyle           scrollViewStyle;
+        private GUIStyle           selectedButtonStyle;
+        private bool               stylesInitialized;
+        private Texture2D          texActive;
+
+        private Texture2D texBackground;
+        private Texture2D texDivider;
+        private Texture2D texHover;
+        private Texture2D texSelected;
+        private Texture2D texSurface;
+        private Texture2D texTransparent;
+        private GUIStyle  titleStyle;
+
+        public ConfigEntry<string> TrackerName;
+
         private Quaternion trackerOffset = Quaternion.identity;
-        private float recenterYaw = 0f; 
-        float yawOffset = 0f;
+        private Vector2    trackerScroll;
+        private Rect       windowRect = new Rect(15, 15, 340, 760);
+        private GUIStyle   windowStyle;
 
+        public Quaternion FinalTrackerRotation { get; private set; }
 
+        private bool showUi;
 
-        void Start()
+        private void Awake()
         {
-            Utilla.Events.GameInitialized += OnGameInitialized;
+            Instance = this;
 
-            PhotonNetwork.LocalPlayer.SetCustomProperties(new ExitGames.Client.Photon.Hashtable()
-            {
-                {
-                    PluginInfo.HashKey, PluginInfo.Version
-                }
-            });
+            TrackerName = Config.Bind("Tracker Settings", "Tracker", "WAIST");
+
+            offsetX = Config.Bind("Offsets", "X", 0f);
+            offsetY = Config.Bind("Offsets", "Y", 0f);
+            offsetZ = Config.Bind("Offsets", "Z", 0f);
+            offsetW = Config.Bind("Offsets", "W", 1f);
+
+            trackerOffset = new Quaternion(
+                    offsetX.Value,
+                    offsetY.Value,
+                    offsetZ.Value,
+                    offsetW.Value
+            );
+
+            int total = BorderSteps * 3;
+            borderTextures = new Texture2D[total];
+            borderColors   = new Color[total];
+            borderRects    = new Rect[total];
         }
 
-        void Awake()
-{
-    trackerName = Config.Bind<string>(
-        "Tracker Settings",        
-        "Tracker",                 
-        "WAIST",                   
-        new ConfigDescription(
-            "Tracker to use.\n" +
-            "Recommended Usage: WAIST or CHEST.\n" +
-            "You can use any tracker you want as long as you know the serial name for it.\n" +
-            "I recommend using WAIST or CHEST only."
-        )
-    );
-
-    trackerSerialDebug = Config.Bind<bool>(
-        "Tracker Settings",
-        "Tracker Serial Debug",
-        false,
-        new ConfigDescription(
-            "Enable debug logs for tracker serial names. Useful if your using a different type of tracker and you dont know what the serial name is."
-        )
-    );
-
-    Logger.LogInfo($"Using tracker: {trackerName.Value}");
-    Logger.LogInfo($"Tracker Serial Debug: {trackerSerialDebug.Value}");
-}
-        void OnEnable()
+        private void Start()
         {
             HarmonyPatches.ApplyHarmonyPatches();
-        }
 
-        void OnDisable()
-        {
-            HarmonyPatches.RemoveHarmonyPatches();
-        }
+            GorillaTagger.OnPlayerSpawned(TrackerManager.Initialize);
 
-        void OnGameInitialized(object sender, EventArgs e)
-        {
-            TrackerManager.Initialize();
-            TrackerManager.hipTrackerSerial = trackerName.Value.ToUpperInvariant();
-            TrackerManager.serialDebug = trackerSerialDebug.Value;
-            SetTurnModeToNone();
-        }
-
-        //Why did I do overcomplicate the sound and do it like this???
-
-        private void PlayReCentredSound()
-        {
-            string url = "https://github.com/ZlothY29IQ/Mod-Resources/raw/refs/heads/main/RecentreSuccessfull.mp3";  //Slime Vr Mounting Calibration Complete SXF
-            StartCoroutine(PlayMp3FromURL(url));
-        }
-
-        private IEnumerator PlayMp3FromURL(string url)
-        {
-            using (UnityWebRequest www = UnityWebRequestMultimedia.GetAudioClip(url, AudioType.MPEG))
+            PhotonNetwork.LocalPlayer.SetCustomProperties(new Hashtable
             {
-                yield return www.SendWebRequest();
+                    { Constants.HashKey, Constants.Version },
+            });
 
-                if (www.result == UnityWebRequest.Result.Success)
+            Stream bundleStream = Assembly.GetExecutingAssembly()
+                                          .GetManifestResourceStream("MonkeRealism.Assets.monkerealism");
+
+            AssetBundle bundle = AssetBundle.LoadFromStream(bundleStream);
+            
+            PressSound     = bundle.LoadAsset<AudioClip>("MonkeRealismPress");
+            CalibrateSound = bundle.LoadAsset<AudioClip>("MonkeRealismCalibrate");
+            
+            titleFont           = bundle.LoadAsset<Font>("Coolvetica");
+            mainFont           = bundle.LoadAsset<Font>("Jersey");
+        }
+
+        private void Update()
+        {
+            if (Keyboard.current.f3Key.wasPressedThisFrame)
+                showUi = !showUi;
+            
+            borderPhase += Time.deltaTime * BorderSpeed;
+            if (borderPhase > 1f) borderPhase -= 1f;
+
+            if (calibrating)
+            {
+                if (!playedCalibrationSound)
                 {
-                    AudioClip clip = DownloadHandlerAudioClip.GetContent(www);
-                    GameObject player = new GameObject("OneShotAudioPlayer");
-                    AudioSource source = player.AddComponent<AudioSource>();
-                    source.clip = clip;
-                    source.Play();
-                    Destroy(player, clip.length);
-                }
-                else
+                    PlaySound(CalibrateSound);
+                    playedCalibrationSound = true;
+                }     
+                
+                calibrationTimer -= Time.deltaTime;
+
+                displayedCountdown = Mathf.CeilToInt(calibrationTimer);
+
+                if (calibrationTimer <= 0f)
                 {
-                    Debug.LogError($"Audio download failed: {www.error}");
-                }
-            }
-        }
+                    Quaternion? rot = TrackerManager.GetTrackerRotation(TrackerName.Value);
 
-
-        private void SetTurnModeToNone()    // https://github.com/DecalFree/GorillaInterface/blob/main/ComputerInterface/BaseGameInterface.cs
-        {
-            GorillaComputer computer = GameObject.FindObjectOfType<GorillaComputer>();
-            if (computer == null)
-            {
-                Logger.LogError("Could not find GorillaComputer in the scene.");
-                return;
-            }
-
-            var turnTypeField = typeof(GorillaComputer).GetField("turnType", BindingFlags.NonPublic | BindingFlags.Instance);
-            if (turnTypeField != null)
-                turnTypeField.SetValue(computer, "NONE");
-
-            var turnValueField = typeof(GorillaComputer).GetField("turnValue", BindingFlags.NonPublic | BindingFlags.Instance);
-            int turnValue = turnValueField != null ? (int)turnValueField.GetValue(computer) : 0;
-
-            PlayerPrefs.SetString("stickTurning", "NONE");
-            PlayerPrefs.Save();
-
-            var snapTurn = GorillaTagger.Instance.GetComponent<GorillaSnapTurn>();
-            if (snapTurn != null)
-            {
-                snapTurn.ChangeTurnMode("NONE", turnValue);
-            }
-            else
-            {
-                Logger.LogWarning("GorillaSnapTurn not found on GorillaTagger.");
-            }
-
-            Logger.LogInfo("Turn mode set to NONE.");
-        }
-
-
-
-        void Update()
-        {
-            if (!inRoom || GTPlayer.Instance == null || GTPlayer.Instance.headCollider == null)
-                return;
-
-            if (ControllerInputPoller.instance.leftControllerSecondaryButton)
-            {
-                recenterHoldTime += Time.deltaTime;
-
-                if (recenterHoldTime >= recenterThreshold)
-                {
-                    //I just want yall to know that this very basic calibration below was kinda a bitch to figure out becuase when i changed the method for something this would go weird.
-                    //Im dreading having to actually make a full calibration method for when I add full body.
-                    //Luckily im actually good at maths compared to everything else I study so it should be too too hard.
-                    //Maybe instead of doing maths, I create reference points based on poses and adjust the position accordingly.
-                    //Did that for a full body mod in minecraft as it wouldnt work normally for some reason.
-                    //Also for the full body, how tf are people gonna move around. Are they gonna have to walk around with their actual legs or am I also gonna make a FPS/VRC style walking.
-                    //Or i just make the legs not collide with anything and its just for visual. If you wanna see them you can just float in the sky a little.
-                    Quaternion? hipRot = TrackerManager.GetHipTrackerRotation();
-                    if (hipRot.HasValue)
+                    if (rot.HasValue)
                     {
-                        float hipYaw = hipRot.Value.eulerAngles.y;
-                        float headsetYaw = GorillaTagger.Instance.mainCamera.transform.rotation.eulerAngles.y;
-                        yawOffset = Mathf.DeltaAngle(-hipYaw, headsetYaw);
-
-
-
-                        Debug.Log($"[MonkeRealism] Recentered. HipYaw: {hipYaw}, HeadsetYaw: {headsetYaw}, YawOffset: {yawOffset}");
-                        PlayReCentredSound();
+                        Transform  head   = GorillaTagger.Instance.mainCamera.transform;
+                        Quaternion target = Quaternion.Euler(0f, head.eulerAngles.y, 0f);
+                        trackerOffset = Quaternion.Inverse(rot.Value) * target;
+                        SaveOffset();
                     }
 
-                    recenterHoldTime = -999f; 
+                    calibrating            = false;
+                    playedCalibrationSound = false;
+                }
+            }
+
+            Quaternion? trackerRot = TrackerManager.GetTrackerRotation(TrackerName.Value);
+
+            if (!trackerRot.HasValue)
+                return;
+
+            FinalTrackerRotation = trackerRot.Value * trackerOffset;
+        }
+
+        private void OnGUI()
+        {
+            if (!showUi)
+                return;
+            
+            InitializeStyles();
+            DrawAnimatedBorder();
+
+            windowRect = GUI.Window(7373, windowRect, DrawWindow, GUIContent.none, windowStyle);
+        }
+
+        private void DrawWindow(int id)
+        {
+            GUILayout.Space(12);
+
+            GUILayout.Label("MONKE REALISM", titleStyle);
+            GUILayout.Space(2);
+            GUILayout.Label("TRACKER CONFIG", labelSmallStyle);
+
+            DrawDivider();
+
+            GUILayout.Space(6);
+            GUILayout.Label("ACTIVE TRACKER", labelSmallStyle);
+            GUILayout.Space(4);
+            GUILayout.Label(TrackerName.Value, labelStyle);
+
+            GUILayout.Space(10);
+            GUILayout.Label("SELECT TRACKER", labelSmallStyle);
+            GUILayout.Space(4);
+
+            trackerScroll = GUILayout.BeginScrollView(
+                    trackerScroll,
+                    false,
+                    false,
+                    GUIStyle.none,
+                    GUIStyle.none,
+                    scrollViewStyle,
+                    GUILayout.Height(160)
+            );
+
+            foreach (string tracker in TrackerManager.GetTrackers())
+            {
+                GUIStyle style = tracker == TrackerName.Value ? selectedButtonStyle : buttonStyle;
+                if (Button(tracker, style, GUILayout.Height(36)))
+                    TrackerName.Value = tracker;
+
+                GUILayout.Space(3);
+            }
+
+            GUILayout.EndScrollView();
+
+            DrawDivider();
+
+            GUILayout.Space(6);
+            GUILayout.Label("ROTATION OFFSET", labelSmallStyle);
+            GUILayout.Space(6);
+
+            DrawAxisButtons(Vector3.right, "PITCH  X");
+            GUILayout.Space(4);
+            DrawAxisButtons(Vector3.up, "YAW    Y");
+            GUILayout.Space(4);
+            DrawAxisButtons(Vector3.forward, "ROLL   Z");
+
+            DrawDivider();
+
+            GUILayout.Space(6);
+
+            if (!calibrating)
+            {
+                if (Button("START T-POSE CALIBRATION", buttonStyle, GUILayout.Height(44)))
+                {
+                    calibrationTimer   = 3f;
+                    displayedCountdown = 3;
+                    calibrating        = true;
                 }
             }
             else
             {
-                recenterHoldTime = 0f;
+                GUILayout.Label($"HOLD T-POSE  {displayedCountdown}", titleStyle);
             }
 
-            Quaternion? hipRotation = TrackerManager.GetHipTrackerRotation();
-            if (hipRotation == null)
-                return;
+            DrawDivider();
 
-            float hipCurrentYaw = hipRotation.Value.eulerAngles.y;
+            GUILayout.Space(6);
 
-            float adjustedYaw = -hipCurrentYaw + yawOffset;
+            Vector3 euler = FinalTrackerRotation.eulerAngles;
 
-            adjustedYaw = (adjustedYaw + 360f) % 360f;
+            GUILayout.Label("LIVE ROTATION", labelSmallStyle);
+            GUILayout.Space(4);
 
-            Transform headCollider = GTPlayer.Instance.headCollider.transform;
-            Vector3 currentEuler = headCollider.rotation.eulerAngles;
+            GUILayout.BeginHorizontal();
+            DrawRotationBadge("X", euler.x);
+            GUILayout.Space(4);
+            DrawRotationBadge("Y", euler.y);
+            GUILayout.Space(4);
+            DrawRotationBadge("Z", euler.z);
+            GUILayout.EndHorizontal();
 
-            headCollider.rotation = Quaternion.Euler(currentEuler.x, adjustedYaw, currentEuler.z);
+            GUILayout.Space(10);
+            GUILayout.Label($"TRACKERS ONLINE  {TrackerManager.GetTrackers().Count}", labelSmallStyle);
+            GUILayout.Space(10);
+
+            GUI.DragWindow(new Rect(0, 0, 9999, 9999));
         }
 
-
-
-
-
-        [ModdedGamemodeJoin]
-        public void OnJoin(string gamemode)
+        private void DrawAxisButtons(Vector3 axis, string label)
         {
-            inRoom = true;
+            GUILayout.Label(label, labelSmallStyle);
+            GUILayout.Space(3);
+            GUILayout.BeginHorizontal();
+
+            if (Button("− 45°", buttonStyle, GUILayout.Height(32)))
+            {
+                trackerOffset = Quaternion.AngleAxis(-45f, axis) * trackerOffset;
+                SaveOffset();
+            }
+
+            GUILayout.Space(4);
+
+            if (Button("+ 45°", buttonStyle, GUILayout.Height(32)))
+            {
+                trackerOffset = Quaternion.AngleAxis(45f, axis) * trackerOffset;
+                SaveOffset();
+            }
+
+            GUILayout.EndHorizontal();
+            GUILayout.Space(2);
         }
 
-        [ModdedGamemodeLeave]
-        public void OnLeave(string gamemode)
+        private void DrawRotationBadge(string axis, float value)
         {
-            inRoom = false;
+            GUILayout.BeginVertical(GUILayout.Width(82));
+            GUILayout.Label(axis,                                                      labelSmallStyle);
+            GUILayout.Label(Mathf.Round(value).ToString(CultureInfo.InvariantCulture), labelStyle);
+            GUILayout.EndVertical();
+        }
+
+        private void DrawDivider()
+        {
+            GUILayout.Space(8);
+            Rect r = GUILayoutUtility.GetRect(0, 1, GUILayout.ExpandWidth(true));
+            r.x     += 10;
+            r.width -= 20;
+            GUI.DrawTexture(r, texDivider);
+            GUILayout.Space(8);
+        }
+        
+        private bool Button(string text, GUIStyle style, params GUILayoutOption[] options)
+        {
+            bool pressed = GUILayout.Button(text, style, options);
+
+            if (pressed && !text.ToLower().Contains("calibration"))
+                PlaySound(PressSound);
+
+            return pressed;
+        }
+
+        private void DrawAnimatedBorder()
+        {
+            float x         = windowRect.x;
+            float y         = windowRect.y;
+            float w         = windowRect.width;
+            float h         = windowRect.height;
+            float perimeter = 2f          * (w + h);
+            float dashLen   = perimeter   * 0.18f;
+            float head      = borderPhase * perimeter;
+
+            for (int dash = 0; dash < 3; dash++)
+            {
+                float from = (head - dash * (perimeter * 0.33f) + perimeter) % perimeter;
+                float t    = dash                                            / 3f;
+                Color colA = Color.Lerp(ColAccent1, ColAccent2, t);
+                Color colB = Color.Lerp(ColAccent2, ColAccent1, t);
+
+                for (int i = 0; i < BorderSteps; i++)
+                {
+                    int   idx   = dash * BorderSteps + i;
+                    float tLerp = (float)i                                          / BorderSteps;
+                    float d0    = (from + dashLen * tLerp)                          % perimeter;
+                    float d1    = (from + dashLen * ((float)(i + 1) / BorderSteps)) % perimeter;
+
+                    Color col = Color.Lerp(colA, colB, tLerp);
+                    col.a = Mathf.Sin(tLerp * Mathf.PI) * 0.9f + 0.1f;
+
+                    if (col != borderColors[idx])
+                    {
+                        borderColors[idx] = col;
+                        if (borderTextures[idx] == null)
+                            borderTextures[idx] = new Texture2D(1, 1) { wrapMode = TextureWrapMode.Clamp, };
+
+                        borderTextures[idx].SetPixel(0, 0, col);
+                        borderTextures[idx].Apply();
+                    }
+
+                    Rect seg = SegmentRect(x, y, w, h, perimeter, d0, d1);
+                    if (seg.width > 0 && seg.height > 0)
+                        GUI.DrawTexture(seg, borderTextures[idx]);
+                }
+            }
+        }
+
+        private Rect SegmentRect(float x, float y, float w, float h, float perimeter, float d0, float d1)
+        {
+            Vector2 p0 = PerimeterPoint(x, y, w, h, perimeter, d0);
+            Vector2 p1 = PerimeterPoint(x, y, w, h, perimeter, d1);
+
+            float minX = Mathf.Min(p0.x, p1.x) - BorderWidth * 0.5f;
+            float minY = Mathf.Min(p0.y, p1.y) - BorderWidth * 0.5f;
+            float maxX = Mathf.Max(p0.x, p1.x) + BorderWidth * 0.5f;
+            float maxY = Mathf.Max(p0.y, p1.y) + BorderWidth * 0.5f;
+
+            if (maxX - minX < BorderWidth)
+            {
+                minX = p0.x - BorderWidth * 0.5f;
+                maxX = minX + BorderWidth;
+            }
+
+            if (maxY - minY < BorderWidth)
+            {
+                minY = p0.y - BorderWidth * 0.5f;
+                maxY = minY + BorderWidth;
+            }
+
+            return new Rect(minX, minY, maxX - minX, maxY - minY);
+        }
+
+        private Vector2 PerimeterPoint(float x, float y, float w, float h, float perimeter, float d)
+        {
+            d = (d % perimeter + perimeter) % perimeter;
+
+            if (d < w) return new Vector2(x + d, y);
+            d -= w;
+
+            if (d < h) return new Vector2(x + w, y + d);
+            d -= h;
+
+            if (d < w) return new Vector2(x + w - d, y + h);
+            d -= w;
+
+            return new Vector2(x, y + h - d);
+        }
+
+        private void InitializeStyles()
+        {
+            if (stylesInitialized) return;
+            stylesInitialized = true;
+
+            texBackground  = MakeTex(ColBackground);
+            texSurface     = MakeTex(ColSurface);
+            texSelected    = MakeTex(ColSelected);
+            texHover       = MakeTex(new Color(0.22f, 0.22f, 0.28f, 1f));
+            texActive      = MakeTex(new Color(0.16f, 0.45f, 0.90f, 1f));
+            texTransparent = MakeTex(new Color(0f,    0f,    0f,    0f));
+            texDivider     = MakeTex(new Color(0.25f, 0.25f, 0.35f, 0.6f));
+
+            windowStyle                   = new GUIStyle
+            {
+                    normal =
+                    {
+                            background = texBackground,
+                    },
+                    padding = new RectOffset(14, 14, 10, 14),
+                    border  = new RectOffset(0,  0,  0,  0),
+            };
+
+            titleStyle = new GUIStyle
+            {
+                    font      = titleFont,
+                    fontSize  = 22,
+                    fontStyle = FontStyle.Bold,
+                    normal    = { textColor = ColText, },
+                    alignment = TextAnchor.MiddleCenter,
+                    richText  = true,
+            };
+
+            labelSmallStyle = new GUIStyle
+            {
+                    font      = mainFont,
+                    fontSize  = 11,
+                    normal    = { textColor = ColSubtext, },
+                    alignment = TextAnchor.MiddleLeft,
+                    richText  = true,
+            };
+
+            labelStyle = new GUIStyle
+            {
+                    font      = mainFont,
+                    fontSize  = 18,
+                    fontStyle = FontStyle.Bold,
+                    normal    = { textColor = ColText, },
+                    alignment = TextAnchor.MiddleLeft,
+                    richText  = true,
+            };
+
+            buttonStyle                      = new GUIStyle
+            {
+                    font      = mainFont,
+                    fontSize  = 14,
+                    fontStyle = FontStyle.Bold,
+                    normal    =
+                    {
+                            background = texSurface,
+                            textColor  = ColText,
+                    },
+                    hover =
+                    {
+                            background = texHover,
+                            textColor  = ColAccentHover,
+                    },
+                    active =
+                    {
+                            background = texActive,
+                            textColor  = Color.white,
+                    },
+                    focused =
+                    {
+                            background = texSurface,
+                            textColor  = ColText,
+                    },
+                    onNormal =
+                    {
+                            background = texSurface,
+                            textColor  = ColText,
+                    },
+                    onHover =
+                    {
+                            background = texHover,
+                            textColor  = ColAccentHover,
+                    },
+                    onActive =
+                    {
+                            background = texActive,
+                            textColor  = Color.white,
+                    },
+                    onFocused =
+                    {
+                            background = texSurface,
+                            textColor  = ColText,
+                    },
+                    alignment = TextAnchor.MiddleCenter,
+                    border    = new RectOffset(0,  0,  0, 0),
+                    padding   = new RectOffset(10, 10, 6, 6),
+            };
+
+            selectedButtonStyle                     = new GUIStyle(buttonStyle)
+            {
+                    normal =
+                    {
+                            background = texSelected,
+                            textColor  = Color.white,
+                    },
+                    hover =
+                    {
+                            background = texSelected,
+                            textColor  = Color.white,
+                    },
+                    active =
+                    {
+                            background = texActive,
+                            textColor  = Color.white,
+                    },
+                    onNormal =
+                    {
+                            background = texSelected,
+                            textColor  = Color.white,
+                    },
+                    onHover =
+                    {
+                            background = texSelected,
+                            textColor  = Color.white,
+                    },
+                    onActive =
+                    {
+                            background = texActive,
+                            textColor  = Color.white,
+                    },
+            };
+
+            scrollViewStyle                   = new GUIStyle
+            {
+                    normal =
+                    {
+                            background = texTransparent,
+                    },
+            };
+        }
+
+        private Texture2D MakeTex(Color col)
+        {
+            Texture2D tex = new Texture2D(1, 1) { wrapMode = TextureWrapMode.Clamp, };
+            tex.SetPixel(0, 0, col);
+            tex.Apply();
+
+            return tex;
+        }
+
+        private void SaveOffset()
+        {
+            offsetX.Value = trackerOffset.x;
+            offsetY.Value = trackerOffset.y;
+            offsetZ.Value = trackerOffset.z;
+            offsetW.Value = trackerOffset.w;
+            Config.Save();
+        }
+
+        private AudioSource source;
+        private void PlaySound(AudioClip clip)
+        {
+            if (source == null)
+            {
+                source             = new GameObject("MonkeRealismAudioSource").AddComponent<AudioSource>();
+                source.playOnAwake = false;
+            }
+            
+            source.PlayOneShot(clip);
         }
     }
 }
