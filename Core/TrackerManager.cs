@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.Text;
+using GorillaLocomotion;
 using OVR.OpenVR;
 using UnityEngine;
 
@@ -11,6 +12,17 @@ namespace MonkeRealism
 
         public static void Initialize()
         {
+            Plugin.Instance.TrackerParent = new GameObject("Tracker Turn Parent");
+            Plugin.Instance.TrackerParent.transform.SetParent(GTPlayer.Instance.turnParent.transform, false);
+            
+            Plugin.Instance.TrackerObject = new GameObject("Torso Tracker");
+            Plugin.Instance.TrackerObject.transform.SetParent(Plugin.Instance.TrackerParent.transform, false);
+            
+            Plugin.Instance.TrackerFollower = new GameObject("Torso Follower");
+            Plugin.Instance.TrackerFollower.transform.SetParent(Plugin.Instance.TrackerObject.transform, false);
+            
+            Plugin.Instance.TrackerFollower.transform.localRotation = Plugin.Instance.TrackerOffset;
+            
             EVRInitError error = EVRInitError.None;
 
             OpenVR.Init(
@@ -93,21 +105,13 @@ namespace MonkeRealism
                                 poses[i].mDeviceToAbsoluteTracking
                         );
                 
-                
-                //TODO: Fix issue where after a certain threshold, such as laying on your back so the tracker is flat, the rotation doesn't bug out and face the wrong direction
-                // If that didnt make sense, try it yourself and see what I mean
+                Vector3 forward = matrix.GetColumn(2);
+                Vector3 up      = matrix.GetColumn(1);
 
-                Quaternion rotation = matrix.rotation;
+                forward.z = -forward.z;
+                up.z      = -up.z;
 
-                Vector3 euler = rotation.eulerAngles;
-
-                rotation = Quaternion.Euler(
-                        euler.z,
-                        -euler.y,
-                        euler.x
-                );
-
-                return rotation;
+                return Quaternion.LookRotation(forward, up);
             }
 
             return null;

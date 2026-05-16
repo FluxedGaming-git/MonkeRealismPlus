@@ -18,21 +18,21 @@ namespace MonkeRealism
         private const int    BorderSteps = 24;
         public static Plugin Instance;
 
-        private AudioClip PressSound, CalibrateSound;
+        private static readonly Color ColBackground  = new Color(0.07f, 0.07f, 0.09f, 0.97f);
+        private static readonly Color ColSurface     = new Color(0.12f, 0.12f, 0.16f, 1f);
+        private static readonly Color ColSelected    = new Color(0.20f, 0.55f, 1.00f, 1f);
+        private static readonly Color ColText        = new Color(0.92f, 0.92f, 0.96f, 1f);
+        private static readonly Color ColSubtext     = new Color(0.55f, 0.55f, 0.65f, 1f);
+        private static readonly Color ColAccent1     = new Color(0.20f, 0.70f, 1.00f, 1f);
+        private static readonly Color ColAccent2     = new Color(0.70f, 0.30f, 1.00f, 1f);
+        private static readonly Color ColAccentHover = new Color(0.30f, 0.80f, 1.00f, 1f);
 
-        private Font titleFont, mainFont;
+        public GameObject TrackerObject;
+        public GameObject TrackerFollower;
+        public GameObject TrackerParent;
 
-        private bool playedCalibrationSound;
-
-        private static readonly Color   ColBackground  = new Color(0.07f, 0.07f, 0.09f, 0.97f);
-        private static readonly Color   ColSurface     = new Color(0.12f, 0.12f, 0.16f, 1f);
-        private static readonly Color   ColSelected    = new Color(0.20f, 0.55f, 1.00f, 1f);
-        private static readonly Color   ColText        = new Color(0.92f, 0.92f, 0.96f, 1f);
-        private static readonly Color   ColSubtext     = new Color(0.55f, 0.55f, 0.65f, 1f);
-        private static readonly Color   ColAccent1     = new Color(0.20f, 0.70f, 1.00f, 1f);
-        private static readonly Color   ColAccent2     = new Color(0.70f, 0.30f, 1.00f, 1f);
-        private static readonly Color   ColAccentHover = new Color(0.30f, 0.80f, 1.00f, 1f);
-        private                 Color[] borderColors;
+        public  Quaternion TrackerOffset = Quaternion.identity;
+        private Color[]    borderColors;
 
         private float  borderPhase;
         private Rect[] borderRects;
@@ -49,10 +49,19 @@ namespace MonkeRealism
         private ConfigEntry<float> offsetX;
         private ConfigEntry<float> offsetY;
         private ConfigEntry<float> offsetZ;
-        private GUIStyle           scrollViewStyle;
-        private GUIStyle           selectedButtonStyle;
-        private bool               stylesInitialized;
-        private Texture2D          texActive;
+
+        private bool playedCalibrationSound;
+
+        private AudioClip         pressSound, calibrateSound;
+        private GUIStyle          scrollViewStyle;
+        private GUIStyle          selectedButtonStyle;
+        public  ConfigEntry<bool> ShouldUseTracker;
+
+        private bool showUi;
+
+        private AudioSource source;
+        private bool        stylesInitialized;
+        private Texture2D   texActive;
 
         private Texture2D texBackground;
         private Texture2D texDivider;
@@ -60,31 +69,28 @@ namespace MonkeRealism
         private Texture2D texSelected;
         private Texture2D texSurface;
         private Texture2D texTransparent;
-        private GUIStyle  titleStyle;
 
-        public ConfigEntry<string> TrackerName;
+        private Font     titleFont, mainFont;
+        private GUIStyle titleStyle;
 
-        private Quaternion trackerOffset = Quaternion.identity;
-        private Vector2    trackerScroll;
-        private Rect       windowRect = new Rect(15, 15, 340, 760);
-        private GUIStyle   windowStyle;
-
-        public Quaternion FinalTrackerRotation { get; private set; }
-
-        private bool showUi;
+        public  ConfigEntry<string> TrackerName;
+        private Vector2             trackerScroll;
+        private Rect                windowRect = new Rect(15, 15, 340, 760);
+        private GUIStyle            windowStyle;
 
         private void Awake()
         {
             Instance = this;
 
-            TrackerName = Config.Bind("Tracker Settings", "Tracker", "WAIST");
+            TrackerName      = Config.Bind("Tracker Settings", "Tracker",      "WAIST");
+            ShouldUseTracker = Config.Bind("Tracker Settings", "Use Tracking", true);
 
             offsetX = Config.Bind("Offsets", "X", 0f);
             offsetY = Config.Bind("Offsets", "Y", 0f);
             offsetZ = Config.Bind("Offsets", "Z", 0f);
             offsetW = Config.Bind("Offsets", "W", 1f);
 
-            trackerOffset = new Quaternion(
+            TrackerOffset = new Quaternion(
                     offsetX.Value,
                     offsetY.Value,
                     offsetZ.Value,
@@ -112,19 +118,19 @@ namespace MonkeRealism
                                           .GetManifestResourceStream("MonkeRealism.Assets.monkerealism");
 
             AssetBundle bundle = AssetBundle.LoadFromStream(bundleStream);
-            
-            PressSound     = bundle.LoadAsset<AudioClip>("MonkeRealismPress");
-            CalibrateSound = bundle.LoadAsset<AudioClip>("MonkeRealismCalibrate");
-            
-            titleFont           = bundle.LoadAsset<Font>("Coolvetica");
-            mainFont           = bundle.LoadAsset<Font>("Jersey");
+
+            pressSound     = bundle.LoadAsset<AudioClip>("MonkeRealismPress");
+            calibrateSound = bundle.LoadAsset<AudioClip>("MonkeRealismCalibrate");
+
+            titleFont = bundle.LoadAsset<Font>("Coolvetica");
+            mainFont  = bundle.LoadAsset<Font>("Jersey");
         }
 
         private void Update()
         {
             if (Keyboard.current.f3Key.wasPressedThisFrame)
                 showUi = !showUi;
-            
+
             borderPhase += Time.deltaTime * BorderSpeed;
             if (borderPhase > 1f) borderPhase -= 1f;
 
@@ -132,10 +138,10 @@ namespace MonkeRealism
             {
                 if (!playedCalibrationSound)
                 {
-                    PlaySound(CalibrateSound);
+                    PlaySound(calibrateSound);
                     playedCalibrationSound = true;
-                }     
-                
+                }
+
                 calibrationTimer -= Time.deltaTime;
 
                 displayedCountdown = Mathf.CeilToInt(calibrationTimer);
@@ -146,9 +152,25 @@ namespace MonkeRealism
 
                     if (rot.HasValue)
                     {
-                        Transform  head   = GorillaTagger.Instance.mainCamera.transform;
-                        Quaternion target = Quaternion.Euler(0f, head.eulerAngles.y, 0f);
-                        trackerOffset = Quaternion.Inverse(rot.Value) * target;
+                        //TODO Fix calibration so it's correct
+                        
+                        Transform head = GorillaTagger.Instance.mainCamera.transform;
+
+                        Quaternion trackerRotation = rot.Value;
+
+                        Vector3 headForward = head.forward;
+                        headForward.y = 0f;
+                        headForward.Normalize();
+
+                        Vector3 trackerForward = trackerRotation * Vector3.forward;
+                        trackerForward.y = 0f;
+                        trackerForward.Normalize();
+
+                        Quaternion headYaw    = Quaternion.LookRotation(headForward,    Vector3.up);
+                        Quaternion trackerYaw = Quaternion.LookRotation(trackerForward, Vector3.up);
+
+                        TrackerOffset = Quaternion.Inverse(trackerYaw) * headYaw;
+
                         SaveOffset();
                     }
 
@@ -162,14 +184,14 @@ namespace MonkeRealism
             if (!trackerRot.HasValue)
                 return;
 
-            FinalTrackerRotation = trackerRot.Value * trackerOffset;
+            TrackerObject.transform.localRotation = trackerRot.Value;
         }
 
         private void OnGUI()
         {
             if (!showUi)
                 return;
-            
+
             InitializeStyles();
             DrawAnimatedBorder();
 
@@ -250,7 +272,7 @@ namespace MonkeRealism
 
             GUILayout.Space(6);
 
-            Vector3 euler = FinalTrackerRotation.eulerAngles;
+            Vector3 euler = TrackerObject.transform.eulerAngles;
 
             GUILayout.Label("LIVE ROTATION", labelSmallStyle);
             GUILayout.Space(4);
@@ -262,7 +284,28 @@ namespace MonkeRealism
             GUILayout.Space(4);
             DrawRotationBadge("Z", euler.z);
             GUILayout.EndHorizontal();
+            
+            GUILayout.Space(8);
 
+            string trackingText =
+                    ShouldUseTracker.Value
+                            ? "TRACKING ENABLED"
+                            : "TRACKING DISABLED";
+
+            GUIStyle toggleStyle =
+                    ShouldUseTracker.Value
+                            ? selectedButtonStyle
+                            : buttonStyle;
+
+            if (Button(
+                        trackingText,
+                        toggleStyle,
+                        GUILayout.Height(42)))
+            {
+                ShouldUseTracker.Value = !ShouldUseTracker.Value;
+                Config.Save();
+            }
+            
             GUILayout.Space(10);
             GUILayout.Label($"TRACKERS ONLINE  {TrackerManager.GetTrackers().Count}", labelSmallStyle);
             GUILayout.Space(10);
@@ -276,17 +319,17 @@ namespace MonkeRealism
             GUILayout.Space(3);
             GUILayout.BeginHorizontal();
 
-            if (Button("− 45°", buttonStyle, GUILayout.Height(32)))
+            if (Button("− 10°", buttonStyle, GUILayout.Height(32)))
             {
-                trackerOffset = Quaternion.AngleAxis(-45f, axis) * trackerOffset;
+                TrackerOffset = Quaternion.AngleAxis(-10f, axis) * TrackerOffset;
                 SaveOffset();
             }
 
             GUILayout.Space(4);
 
-            if (Button("+ 45°", buttonStyle, GUILayout.Height(32)))
+            if (Button("+ 10°", buttonStyle, GUILayout.Height(32)))
             {
-                trackerOffset = Quaternion.AngleAxis(45f, axis) * trackerOffset;
+                TrackerOffset = Quaternion.AngleAxis(10f, axis) * TrackerOffset;
                 SaveOffset();
             }
 
@@ -311,13 +354,13 @@ namespace MonkeRealism
             GUI.DrawTexture(r, texDivider);
             GUILayout.Space(8);
         }
-        
+
         private bool Button(string text, GUIStyle style, params GUILayoutOption[] options)
         {
             bool pressed = GUILayout.Button(text, style, options);
 
             if (pressed && !text.ToLower().Contains("calibration"))
-                PlaySound(PressSound);
+                PlaySound(pressSound);
 
             return pressed;
         }
@@ -420,7 +463,7 @@ namespace MonkeRealism
             texTransparent = MakeTex(new Color(0f,    0f,    0f,    0f));
             texDivider     = MakeTex(new Color(0.25f, 0.25f, 0.35f, 0.6f));
 
-            windowStyle                   = new GUIStyle
+            windowStyle = new GUIStyle
             {
                     normal =
                     {
@@ -459,12 +502,12 @@ namespace MonkeRealism
                     richText  = true,
             };
 
-            buttonStyle                      = new GUIStyle
+            buttonStyle = new GUIStyle
             {
                     font      = mainFont,
                     fontSize  = 14,
                     fontStyle = FontStyle.Bold,
-                    normal    =
+                    normal =
                     {
                             background = texSurface,
                             textColor  = ColText,
@@ -509,7 +552,7 @@ namespace MonkeRealism
                     padding   = new RectOffset(10, 10, 6, 6),
             };
 
-            selectedButtonStyle                     = new GUIStyle(buttonStyle)
+            selectedButtonStyle = new GUIStyle(buttonStyle)
             {
                     normal =
                     {
@@ -543,7 +586,7 @@ namespace MonkeRealism
                     },
             };
 
-            scrollViewStyle                   = new GUIStyle
+            scrollViewStyle = new GUIStyle
             {
                     normal =
                     {
@@ -563,14 +606,15 @@ namespace MonkeRealism
 
         private void SaveOffset()
         {
-            offsetX.Value = trackerOffset.x;
-            offsetY.Value = trackerOffset.y;
-            offsetZ.Value = trackerOffset.z;
-            offsetW.Value = trackerOffset.w;
+            offsetX.Value = TrackerOffset.x;
+            offsetY.Value = TrackerOffset.y;
+            offsetZ.Value = TrackerOffset.z;
+            offsetW.Value = TrackerOffset.w;
             Config.Save();
+
+            TrackerFollower.transform.localRotation = TrackerOffset;
         }
 
-        private AudioSource source;
         private void PlaySound(AudioClip clip)
         {
             if (source == null)
@@ -578,7 +622,7 @@ namespace MonkeRealism
                 source             = new GameObject("MonkeRealismAudioSource").AddComponent<AudioSource>();
                 source.playOnAwake = false;
             }
-            
+
             source.PlayOneShot(clip);
         }
     }

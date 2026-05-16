@@ -11,10 +11,10 @@ namespace MonkeRealism.Patches
         {
             try
             {
-                if (!__instance.isLocal)
+                if (!__instance.isLocal || !Plugin.Instance.ShouldUseTracker.Value)
                     return;
 
-                __instance.transform.rotation = Plugin.Instance.FinalTrackerRotation;
+                __instance.transform.rotation = Plugin.Instance.TrackerFollower.transform.rotation;
 
                 __instance.head.MapMine(__instance.scaleFactor, __instance.playerOffsetTransform);
                 __instance.leftHand.MapMine(__instance.scaleFactor, __instance.playerOffsetTransform);
