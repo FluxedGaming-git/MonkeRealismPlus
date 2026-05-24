@@ -35,7 +35,7 @@ internal static class GorillaIKMgrCopyInputPatch
     }
 
     private static void FeedElbow(GorillaIK gorillaIK, Plugin plugin, VRRig rig,
-        float scale, Quaternion bodyRot, Vector3? chestPos, Quaternion? chestRot, bool isLeft)
+    float scale, Quaternion bodyRot, Vector3? chestPos, Quaternion? chestRot, bool isLeft)
     {
         string trackerName = isLeft ? plugin.LeftElbowTrackerName.Value : plugin.RightElbowTrackerName.Value;
         if (string.IsNullOrEmpty(trackerName)) return;
@@ -46,21 +46,32 @@ internal static class GorillaIKMgrCopyInputPatch
         // Apply user offset
         trackerRot = trackerRot.Value * (isLeft ? plugin.LeftElbowOffset : plugin.RightElbowOffset);
 
-        Vector3 shoulderPos = ElbowIK.GetShoulderPosition(rig, bodyRot, isLeft, chestPos, chestRot, scale);
+        // Get hand position
         Vector3 handPos = GetHandWorldPosition(rig, isLeft);
 
-        // Calculate elbow direction that the game expects
-        Vector3 elbowDirection = CalculateElbowDirection(shoulderPos, handPos, trackerRot.Value);
+        // Get shoulder parent for space conversion
+        var shoulderParent = isLeft
+            ? gorillaIK.leftUpperArm?.parent
+            : gorillaIK.rightUpperArm?.parent;
+
+        if (shoulderParent == null) return;
+
+        // Use tracker's downward axis as the elbow hint direction
+        // Try Vector3.down, Vector3.forward, Vector3.right — we'll start with down
+        Vector3 trackerDown = trackerRot.Value * Vector3.down;
+
+        // Convert to shoulder-parent local space
+        Vector3 elbowDir = shoulderParent.InverseTransformDirection(trackerDown);
 
         if (isLeft)
         {
-            gorillaIK.leftElbowDirection = elbowDirection;
-            gorillaIK.lerpLeftElbowDirection = elbowDirection;
+            gorillaIK.leftElbowDirection = elbowDir;
+            gorillaIK.lerpLeftElbowDirection = elbowDir;
         }
         else
         {
-            gorillaIK.rightElbowDirection = elbowDirection;
-            gorillaIK.lerpRightElbowDirection = elbowDirection;
+            gorillaIK.rightElbowDirection = elbowDir;
+            gorillaIK.lerpRightElbowDirection = elbowDir;
         }
     }
 
