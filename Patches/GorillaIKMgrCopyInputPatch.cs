@@ -11,88 +11,83 @@ internal static class GorillaIKMgrCopyInputPatch
         var plugin = Plugin.Instance;
         if (plugin == null || !plugin.ShouldUseElbowTracking.Value) return;
 
-        // Find the local rig's GorillaIK
-        var gorillaIK = VRRig.LocalRig?.GetComponent<GorillaIK>();
+        var rig = VRRig.LocalRig;
+        if (rig == null) return;
+
+        var gorillaIK = rig.GetComponent<GorillaIK>();
         if (gorillaIK == null) return;
 
-        // Force the flag so CopyInput passes usingNewIK = true into the job
+        // === FORCE THE IK MODE ===
         gorillaIK.usingUpdatedIK = true;
+        gorillaIK.canUseUpdatedIK = true;
 
-        // Feed our solved elbow directions
-        var scaleFactor = VRRig.LocalRig.scaleFactor;
-        var bodyRot = plugin.TrackerFollower != null
-            ? plugin.TrackerFollower.transform.rotation
-            : VRRig.LocalRig.transform.rotation;
+        if (GorillaIKMgr.playerIK == gorillaIK)
+            GorillaIKMgr.playerIK.usingUpdatedIK = true;
 
-        Vector3? chestPos = plugin.TrackerObject != null
-            ? (Vector3?)plugin.TrackerObject.transform.position : null;
-        Quaternion? chestRot = plugin.TrackerObject != null
-            ? (Quaternion?)plugin.TrackerObject.transform.rotation : null;
+        var scale = rig.scaleFactor;
+        var bodyRot = plugin.TrackerFollower?.transform.rotation ?? rig.transform.rotation;
 
-        FeedElbowDirection(gorillaIK, plugin, VRRig.LocalRig, scaleFactor, bodyRot, chestPos, chestRot, isLeft: true);
-        FeedElbowDirection(gorillaIK, plugin, VRRig.LocalRig, scaleFactor, bodyRot, chestPos, chestRot, isLeft: false);
+        Vector3? chestPos = plugin.TrackerObject?.transform.position;
+        Quaternion? chestRot = plugin.TrackerObject?.transform.rotation;
+
+        FeedElbow(gorillaIK, plugin, rig, scale, bodyRot, chestPos, chestRot, true);
+        FeedElbow(gorillaIK, plugin, rig, scale, bodyRot, chestPos, chestRot, false);
     }
 
-    private static void FeedElbowDirection(
-        GorillaIK gorillaIK, Plugin plugin, VRRig rig,
-        float scaleFactor, Quaternion bodyRot,
-        Vector3? chestPos, Quaternion? chestRot, bool isLeft)
+    private static void FeedElbow(GorillaIK gorillaIK, Plugin plugin, VRRig rig,
+        float scale, Quaternion bodyRot, Vector3? chestPos, Quaternion? chestRot, bool isLeft)
     {
-        string trackerName = isLeft
-            ? plugin.LeftElbowTrackerName.Value
-            : plugin.RightElbowTrackerName.Value;
-
+        string trackerName = isLeft ? plugin.LeftElbowTrackerName.Value : plugin.RightElbowTrackerName.Value;
         if (string.IsNullOrEmpty(trackerName)) return;
 
-        Quaternion? trackerRot = TrackerManager.GetTrackerRotation(trackerName);
-        Vector3? trackerPos = TrackerManager.GetTrackerPosition(trackerName);
+        var trackerRot = TrackerManager.GetTrackerRotation(trackerName);
+        if (!trackerRot.HasValue) return;
 
-        Quaternion elbowOffset = isLeft ? plugin.LeftElbowOffset : plugin.RightElbowOffset;
-        if (trackerRot.HasValue)
-            trackerRot = trackerRot.Value * elbowOffset;
+        // Apply user offset
+        trackerRot = trackerRot.Value * (isLeft ? plugin.LeftElbowOffset : plugin.RightElbowOffset);
 
-        var vrMap = isLeft ? rig.leftHand : rig.rightHand;
-        Vector3 hand = vrMap.overrideTarget != null
-            ? vrMap.overrideTarget.position
-            : vrMap.rigTarget != null
-                ? vrMap.rigTarget.position
-                : rig.transform.TransformPoint(vrMap.syncPos);
+        Vector3 shoulderPos = ElbowIK.GetShoulderPosition(rig, bodyRot, isLeft, chestPos, chestRot, scale);
+        Vector3 handPos = GetHandWorldPosition(rig, isLeft);
 
-        var shoulder = ElbowIK.GetShoulderPosition(
-            rig, bodyRot, isLeft, chestPos, chestRot, scaleFactor);
-
-        var armLength = plugin.ElbowArmLength.Value * scaleFactor;
-
-        ElbowIK.SolveArm(
-            shoulder, hand, armLength,
-            trackerPos, trackerRot,
-            bodyRot, isLeft,
-            out var upperArmRot,
-            out _); // forearm rotation not needed here
-
-        // Reconstruct elbow world position from solved upper arm
-        var elbowWorldPos = shoulder + (upperArmRot * Vector3.forward) * (armLength * ElbowIK.UpperArmRatio);
-
-        // Convert to the local direction space GorillaIKMgr.CopyInput expects:
-        // it reads elbowDir relative to the shoulder parent transform
-        var shoulderParent = isLeft
-            ? gorillaIK.leftUpperArm?.parent
-            : gorillaIK.rightUpperArm?.parent;
-
-        if (shoulderParent == null) return;
-
-        var elbowLocalDir = shoulderParent.InverseTransformDirection(
-            (elbowWorldPos - hand).normalized);
+        // Calculate elbow direction that the game expects
+        Vector3 elbowDirection = CalculateElbowDirection(shoulderPos, handPos, trackerRot.Value);
 
         if (isLeft)
         {
-            gorillaIK.leftElbowDirection = elbowLocalDir;
-            gorillaIK.lerpLeftElbowDirection = elbowLocalDir;
+            gorillaIK.leftElbowDirection = elbowDirection;
+            gorillaIK.lerpLeftElbowDirection = elbowDirection;
         }
         else
         {
-            gorillaIK.rightElbowDirection = elbowLocalDir;
-            gorillaIK.lerpRightElbowDirection = elbowLocalDir;
+            gorillaIK.rightElbowDirection = elbowDirection;
+            gorillaIK.lerpRightElbowDirection = elbowDirection;
         }
+    }
+
+    private static Vector3 GetHandWorldPosition(VRRig rig, bool isLeft)
+    {
+        var hand = isLeft ? rig.leftHand : rig.rightHand;
+        return hand.overrideTarget != null ? hand.overrideTarget.position :
+               hand.rigTarget != null ? hand.rigTarget.position :
+               rig.transform.TransformPoint(hand.syncPos);
+    }
+
+    // Simple but effective elbow direction solver
+    private static Vector3 CalculateElbowDirection(Vector3 shoulder, Vector3 hand, Quaternion trackerRot)
+    {
+        Vector3 armVector = hand - shoulder;
+        float armLength = armVector.magnitude;
+
+        if (armLength < 0.01f) return Vector3.forward;
+
+        Vector3 midPoint = shoulder + armVector * 0.5f;
+
+        // Pull elbow slightly toward tracker forward direction
+        Vector3 trackerForward = trackerRot * Vector3.forward;
+        Vector3 elbowTarget = midPoint + trackerForward * (armLength * 0.35f);
+
+        Vector3 elbowDir = (elbowTarget - shoulder).normalized;
+
+        return elbowDir;
     }
 }

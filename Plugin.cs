@@ -96,7 +96,7 @@ namespace MonkeRealism
         private Vector2 leftElbowScroll;
         private Vector2 rightElbowScroll;
 
-        private Rect windowRect = new Rect(15, 15, 340, 1600);
+        private Rect windowRect = new Rect(15, 15, 340, 1665);
         private GUIStyle windowStyle;
 
         private void Awake()
@@ -251,8 +251,10 @@ namespace MonkeRealism
         private void DrawWindow(int id)
         {
             GUILayout.Space(12);
-            GUILayout.Label("MONKE REALISM", titleStyle);
-            GUILayout.Space(2);
+            GUILayout.Label("MONKE REALISM+ ", titleStyle);
+            GUILayout.Label($"          v{Constants.Version} | Made by ZlothY - Addon by FluxedGaming", labelSmallStyle);
+            DrawDivider();
+            //GUILayout.Space(2);
             GUILayout.Label("TRACKER CONFIG", labelSmallStyle);
 
             // ── WAIST TRACKER ────────────────────────────────────────────
@@ -319,8 +321,6 @@ namespace MonkeRealism
             Vector3 euler = TrackerObject.transform.eulerAngles;
             GUILayout.Label("CHEST LIVE ROTATION", labelSmallStyle);
             GUILayout.Space(4);
-
-            DrawDivider();
 
             GUILayout.BeginHorizontal();
             DrawRotationBadge("X", euler.x);
