@@ -172,5 +172,54 @@ namespace MonkeRealism
 
             return matrix;
         }
+
+        public static Vector3? GetTrackerPosition(string trackerName)
+        {
+            if (!isInitialized || OpenVR.System == null)
+                return null;
+
+            TrackedDevicePose_t[] poses =
+                    new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
+
+            OpenVR.System.GetDeviceToAbsoluteTrackingPose(
+                    ETrackingUniverseOrigin.TrackingUniverseStanding,
+                    0,
+                    poses
+            );
+
+            for (uint i = 0; i < poses.Length; i++)
+            {
+                if (!poses[i].bDeviceIsConnected || !poses[i].bPoseIsValid)
+                    continue;
+
+                if (OpenVR.System.GetTrackedDeviceClass(i) !=
+                    ETrackedDeviceClass.GenericTracker)
+                    continue;
+
+                string serial = GetDeviceSerial(i);
+
+                if (string.IsNullOrEmpty(serial))
+                    continue;
+
+                if (!serial.ToLower().Contains(trackerName.ToLower()))
+                    continue;
+
+                Matrix4x4 matrix =
+                        ConvertSteamVRMatrixToUnity(
+                                poses[i].mDeviceToAbsoluteTracking
+                        );
+
+                // Position is the last column, with Z flipped for Unity's coordinate system
+                Vector3 position = new Vector3(
+                        matrix.m03,
+                        matrix.m13,
+                    -matrix.m23
+                );
+
+                return position;
+            }
+
+            return null;
+        }
     }
 }

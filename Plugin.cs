@@ -56,6 +56,10 @@ namespace MonkeRealism
         private GUIStyle          scrollViewStyle;
         private GUIStyle          selectedButtonStyle;
         public  ConfigEntry<bool> ShouldUseTracker;
+        // --- Elbow tracking config ---
+        public ConfigEntry<string> LeftElbowTrackerName;
+        public ConfigEntry<string> RightElbowTrackerName;
+        public ConfigEntry<bool>   ShouldUseElbowTracking;
 
         private bool showUi;
 
@@ -84,6 +88,16 @@ namespace MonkeRealism
 
             TrackerName      = Config.Bind("Tracker Settings", "Tracker",      "WAIST");
             ShouldUseTracker = Config.Bind("Tracker Settings", "Use Tracking", true);
+            LeftElbowTrackerName   = Config.Bind("Elbow Tracking", "Left Elbow Tracker",  "LEFT_ELBOW");
+            RightElbowTrackerName  = Config.Bind("Elbow Tracking", "Right Elbow Tracker", "RIGHT_ELBOW");
+            ShouldUseElbowTracking = Config.Bind("Elbow Tracking", "Use Elbow Tracking",  true);
+            // In the ShouldUseElbowTracking toggle handler:
+            ShouldUseElbowTracking.SettingChanged += (_, _) =>
+            {
+                var gorillaIK = VRRig.LocalRig?.GetComponent<GorillaIK>();
+                if (gorillaIK != null)
+                    gorillaIK.enabled = !ShouldUseElbowTracking.Value;
+            };
 
             offsetX = Config.Bind("Offsets", "X", 0f);
             offsetY = Config.Bind("Offsets", "Y", 0f);
@@ -108,6 +122,15 @@ namespace MonkeRealism
             HarmonyPatches.ApplyHarmonyPatches();
 
             GorillaTagger.OnPlayerSpawned(TrackerManager.Initialize);
+
+            GorillaTagger.OnPlayerSpawned(() =>
+            {
+                Transform rigRoot = GorillaTagger.Instance.offlineVRRig.transform;
+                ElbowTrackingManager.Initialize(rigRoot);
+                var gorillaIK = VRRig.LocalRig?.GetComponent<GorillaIK>();
+                if (gorillaIK != null)
+                    gorillaIK.enabled = !ShouldUseElbowTracking.Value;
+            });
 
             PhotonNetwork.LocalPlayer.SetCustomProperties(new Hashtable
             {
@@ -177,6 +200,15 @@ namespace MonkeRealism
                     calibrating            = false;
                     playedCalibrationSound = false;
                 }
+            }
+
+            if (ShouldUseElbowTracking.Value)
+            {
+                ElbowTrackingManager.ApplyRotations(
+                    LeftElbowTrackerName.Value,
+                    RightElbowTrackerName.Value,
+                    TrackerOffset   // reuses the same offset quaternion as the waist; give elbows their own if needed
+                );
             }
 
             Quaternion? trackerRot = TrackerManager.GetTrackerRotation(TrackerName.Value);
@@ -305,6 +337,29 @@ namespace MonkeRealism
                 ShouldUseTracker.Value = !ShouldUseTracker.Value;
                 Config.Save();
             }
+
+            DrawDivider();
+            GUILayout.Space(6);
+            GUILayout.Label("ELBOW TRACKING", labelSmallStyle);
+            GUILayout.Space(4);
+
+            string elbowText  = ShouldUseElbowTracking.Value ? "ELBOWS ENABLED" : "ELBOWS DISABLED";
+            GUIStyle elbowStyle = ShouldUseElbowTracking.Value ? selectedButtonStyle : buttonStyle;
+
+            if (Button(elbowText, elbowStyle, GUILayout.Height(42)))
+            {
+                ShouldUseElbowTracking.Value = !ShouldUseElbowTracking.Value;
+                Config.Save();
+            }
+
+            GUILayout.Space(6);
+            GUILayout.Label("LEFT ELBOW", labelSmallStyle);
+            GUILayout.Space(4);
+            GUILayout.Label(LeftElbowTrackerName.Value, labelStyle);
+            GUILayout.Space(6);
+            GUILayout.Label("RIGHT ELBOW", labelSmallStyle);
+            GUILayout.Space(4);
+            GUILayout.Label(RightElbowTrackerName.Value, labelStyle);
             
             GUILayout.Space(10);
             GUILayout.Label($"TRACKERS ONLINE  {TrackerManager.GetTrackers().Count}", labelSmallStyle);
