@@ -126,6 +126,7 @@ namespace MonkeRealism
             GorillaTagger.OnPlayerSpawned(() =>
             {
                 Transform rigRoot = GorillaTagger.Instance.offlineVRRig.transform;
+                BodyColliderFix.Refresh();
                 ElbowTrackingManager.Initialize(rigRoot);
                 var gorillaIK = VRRig.LocalRig?.GetComponent<GorillaIK>();
                 if (gorillaIK != null)
