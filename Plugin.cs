@@ -13,60 +13,74 @@ namespace MonkeRealism
     [BepInPlugin(Constants.Guid, Constants.Name, Constants.Version)]
     public class Plugin : BaseUnityPlugin
     {
-        private const float  BorderSpeed = 0.2f;
-        private const float  BorderWidth = 3f;
-        private const int    BorderSteps = 24;
+        private const float BorderSpeed = 0.2f;
+        private const float BorderWidth = 3f;
+        private const int BorderSteps = 24;
         public static Plugin Instance;
 
-        private static readonly Color ColBackground  = new Color(0.07f, 0.07f, 0.09f, 0.97f);
-        private static readonly Color ColSurface     = new Color(0.12f, 0.12f, 0.16f, 1f);
-        private static readonly Color ColSelected    = new Color(0.20f, 0.55f, 1.00f, 1f);
-        private static readonly Color ColText        = new Color(0.92f, 0.92f, 0.96f, 1f);
-        private static readonly Color ColSubtext     = new Color(0.55f, 0.55f, 0.65f, 1f);
-        private static readonly Color ColAccent1     = new Color(0.20f, 0.70f, 1.00f, 1f);
-        private static readonly Color ColAccent2     = new Color(0.70f, 0.30f, 1.00f, 1f);
+        private static readonly Color ColBackground = new Color(0.07f, 0.07f, 0.09f, 0.97f);
+        private static readonly Color ColSurface = new Color(0.12f, 0.12f, 0.16f, 1f);
+        private static readonly Color ColSelected = new Color(0.20f, 0.55f, 1.00f, 1f);
+        private static readonly Color ColText = new Color(0.92f, 0.92f, 0.96f, 1f);
+        private static readonly Color ColSubtext = new Color(0.55f, 0.55f, 0.65f, 1f);
+        private static readonly Color ColAccent1 = new Color(0.20f, 0.70f, 1.00f, 1f);
+        private static readonly Color ColAccent2 = new Color(0.70f, 0.30f, 1.00f, 1f);
         private static readonly Color ColAccentHover = new Color(0.30f, 0.80f, 1.00f, 1f);
 
         public GameObject TrackerObject;
         public GameObject TrackerFollower;
         public GameObject TrackerParent;
 
-        public  Quaternion TrackerOffset = Quaternion.identity;
-        private Color[]    borderColors;
+        public Quaternion TrackerOffset = Quaternion.identity;
+        public Quaternion LeftElbowOffset = Quaternion.identity;
+        public Quaternion RightElbowOffset = Quaternion.identity;
 
-        private float  borderPhase;
+        private Color[] borderColors;
+        private float borderPhase;
         private Rect[] borderRects;
-
         private Texture2D[] borderTextures;
-        private GUIStyle    buttonStyle;
+        private GUIStyle buttonStyle;
 
-        private bool               calibrating;
-        private float              calibrationTimer;
-        private int                displayedCountdown = 3;
-        private GUIStyle           labelSmallStyle;
-        private GUIStyle           labelStyle;
+        private bool calibrating;
+        private float calibrationTimer;
+        private int displayedCountdown = 3;
+        private GUIStyle labelSmallStyle;
+        private GUIStyle labelStyle;
+
+        // Waist offset config
         private ConfigEntry<float> offsetW;
         private ConfigEntry<float> offsetX;
         private ConfigEntry<float> offsetY;
         private ConfigEntry<float> offsetZ;
 
+        // Left elbow offset config
+        private ConfigEntry<float> leftElbowOffsetX;
+        private ConfigEntry<float> leftElbowOffsetY;
+        private ConfigEntry<float> leftElbowOffsetZ;
+        private ConfigEntry<float> leftElbowOffsetW;
+
+        // Right elbow offset config
+        private ConfigEntry<float> rightElbowOffsetX;
+        private ConfigEntry<float> rightElbowOffsetY;
+        private ConfigEntry<float> rightElbowOffsetZ;
+        private ConfigEntry<float> rightElbowOffsetW;
+
         private bool playedCalibrationSound;
 
-        private AudioClip         pressSound, calibrateSound;
-        private GUIStyle          scrollViewStyle;
-        private GUIStyle          selectedButtonStyle;
-        public  ConfigEntry<bool> ShouldUseTracker;
-        // --- Elbow tracking config ---
+        private AudioClip pressSound, calibrateSound;
+        private GUIStyle scrollViewStyle;
+        private GUIStyle selectedButtonStyle;
+
+        public ConfigEntry<bool> ShouldUseTracker;
         public ConfigEntry<string> LeftElbowTrackerName;
         public ConfigEntry<string> RightElbowTrackerName;
-        public ConfigEntry<bool>   ShouldUseElbowTracking;
+        public ConfigEntry<bool> ShouldUseElbowTracking;
+        public ConfigEntry<float> ElbowArmLength;
 
         private bool showUi;
-
         private AudioSource source;
-        private bool        stylesInitialized;
-        private Texture2D   texActive;
-
+        private bool stylesInitialized;
+        private Texture2D texActive;
         private Texture2D texBackground;
         private Texture2D texDivider;
         private Texture2D texHover;
@@ -74,47 +88,63 @@ namespace MonkeRealism
         private Texture2D texSurface;
         private Texture2D texTransparent;
 
-        private Font     titleFont, mainFont;
+        private Font titleFont, mainFont;
         private GUIStyle titleStyle;
 
-        public  ConfigEntry<string> TrackerName;
-        private Vector2             trackerScroll;
-        private Rect                windowRect = new Rect(15, 15, 340, 760);
-        private GUIStyle            windowStyle;
+        public ConfigEntry<string> TrackerName;
+        private Vector2 trackerScroll;
+        private Vector2 leftElbowScroll;
+        private Vector2 rightElbowScroll;
+
+        private Rect windowRect = new Rect(15, 15, 340, 1600);
+        private GUIStyle windowStyle;
 
         private void Awake()
         {
             Instance = this;
 
-            TrackerName      = Config.Bind("Tracker Settings", "Tracker",      "WAIST");
+            TrackerName = Config.Bind("Tracker Settings", "Tracker", "WAIST");
             ShouldUseTracker = Config.Bind("Tracker Settings", "Use Tracking", true);
-            LeftElbowTrackerName   = Config.Bind("Elbow Tracking", "Left Elbow Tracker",  "LEFT_ELBOW");
-            RightElbowTrackerName  = Config.Bind("Elbow Tracking", "Right Elbow Tracker", "RIGHT_ELBOW");
-            ShouldUseElbowTracking = Config.Bind("Elbow Tracking", "Use Elbow Tracking",  true);
-            // In the ShouldUseElbowTracking toggle handler:
-            ShouldUseElbowTracking.SettingChanged += (_, _) =>
-            {
-                var gorillaIK = VRRig.LocalRig?.GetComponent<GorillaIK>();
-                if (gorillaIK != null)
-                    gorillaIK.enabled = !ShouldUseElbowTracking.Value;
-            };
 
+            LeftElbowTrackerName = Config.Bind("Elbow Tracking", "Left Elbow Tracker", "LEFT_ELBOW");
+            RightElbowTrackerName = Config.Bind("Elbow Tracking", "Right Elbow Tracker", "RIGHT_ELBOW");
+            ShouldUseElbowTracking = Config.Bind("Elbow Tracking", "Use Elbow Tracking", true);
+            ElbowArmLength = Config.Bind("Elbow Tracking", "Arm Length", 0.7878566f);
+
+            // Waist offsets
             offsetX = Config.Bind("Offsets", "X", 0f);
             offsetY = Config.Bind("Offsets", "Y", 0f);
             offsetZ = Config.Bind("Offsets", "Z", 0f);
             offsetW = Config.Bind("Offsets", "W", 1f);
 
             TrackerOffset = new Quaternion(
-                    offsetX.Value,
-                    offsetY.Value,
-                    offsetZ.Value,
-                    offsetW.Value
-            );
+                offsetX.Value, offsetY.Value,
+                offsetZ.Value, offsetW.Value);
+
+            // Left elbow offsets
+            leftElbowOffsetX = Config.Bind("LeftElbowOffsets", "X", 0f);
+            leftElbowOffsetY = Config.Bind("LeftElbowOffsets", "Y", 0f);
+            leftElbowOffsetZ = Config.Bind("LeftElbowOffsets", "Z", 0f);
+            leftElbowOffsetW = Config.Bind("LeftElbowOffsets", "W", 1f);
+
+            LeftElbowOffset = new Quaternion(
+                leftElbowOffsetX.Value, leftElbowOffsetY.Value,
+                leftElbowOffsetZ.Value, leftElbowOffsetW.Value);
+
+            // Right elbow offsets
+            rightElbowOffsetX = Config.Bind("RightElbowOffsets", "X", 0f);
+            rightElbowOffsetY = Config.Bind("RightElbowOffsets", "Y", 0f);
+            rightElbowOffsetZ = Config.Bind("RightElbowOffsets", "Z", 0f);
+            rightElbowOffsetW = Config.Bind("RightElbowOffsets", "W", 1f);
+
+            RightElbowOffset = new Quaternion(
+                rightElbowOffsetX.Value, rightElbowOffsetY.Value,
+                rightElbowOffsetZ.Value, rightElbowOffsetW.Value);
 
             int total = BorderSteps * 3;
             borderTextures = new Texture2D[total];
-            borderColors   = new Color[total];
-            borderRects    = new Rect[total];
+            borderColors = new Color[total];
+            borderRects = new Rect[total];
         }
 
         private void Start()
@@ -126,16 +156,13 @@ namespace MonkeRealism
             GorillaTagger.OnPlayerSpawned(() =>
             {
                 Transform rigRoot = GorillaTagger.Instance.offlineVRRig.transform;
-                BodyColliderFix.Refresh();
-                ElbowTrackingManager.Initialize(rigRoot);
-                var gorillaIK = VRRig.LocalRig?.GetComponent<GorillaIK>();
-                if (gorillaIK != null)
-                    gorillaIK.enabled = !ShouldUseElbowTracking.Value;
+                MonkeRealism.Core.BodyColliderFix.Refresh();
+                MonkeRealism.Core.ElbowTrackingManager.Initialize(rigRoot);
             });
 
             PhotonNetwork.LocalPlayer.SetCustomProperties(new Hashtable
             {
-                    { Constants.HashKey, Constants.Version },
+                { Constants.HashKey, Constants.Version },
             });
 
             Stream bundleStream = Assembly.GetExecutingAssembly()
@@ -143,11 +170,10 @@ namespace MonkeRealism
 
             AssetBundle bundle = AssetBundle.LoadFromStream(bundleStream);
 
-            pressSound     = bundle.LoadAsset<AudioClip>("MonkeRealismPress");
+            pressSound = bundle.LoadAsset<AudioClip>("MonkeRealismPress");
             calibrateSound = bundle.LoadAsset<AudioClip>("MonkeRealismCalibrate");
-
             titleFont = bundle.LoadAsset<Font>("Coolvetica");
-            mainFont  = bundle.LoadAsset<Font>("Jersey");
+            mainFont = bundle.LoadAsset<Font>("Jersey");
         }
 
         private void Update()
@@ -167,7 +193,6 @@ namespace MonkeRealism
                 }
 
                 calibrationTimer -= Time.deltaTime;
-
                 displayedCountdown = Mathf.CeilToInt(calibrationTimer);
 
                 if (calibrationTimer <= 0f)
@@ -176,8 +201,6 @@ namespace MonkeRealism
 
                     if (rot.HasValue)
                     {
-                        //TODO Fix calibration so it's correct
-                        
                         Transform head = GorillaTagger.Instance.mainCamera.transform;
 
                         Quaternion trackerRotation = rot.Value;
@@ -190,40 +213,34 @@ namespace MonkeRealism
                         trackerForward.y = 0f;
                         trackerForward.Normalize();
 
-                        Quaternion headYaw    = Quaternion.LookRotation(headForward,    Vector3.up);
+                        Quaternion headYaw = Quaternion.LookRotation(headForward, Vector3.up);
                         Quaternion trackerYaw = Quaternion.LookRotation(trackerForward, Vector3.up);
 
                         TrackerOffset = Quaternion.Inverse(trackerYaw) * headYaw;
-
                         SaveOffset();
                     }
 
-                    calibrating            = false;
+                    calibrating = false;
                     playedCalibrationSound = false;
                 }
             }
 
             if (ShouldUseElbowTracking.Value)
             {
-                ElbowTrackingManager.ApplyRotations(
+                MonkeRealism.Core.ElbowTrackingManager.ApplyRotations(
                     LeftElbowTrackerName.Value,
                     RightElbowTrackerName.Value,
-                    TrackerOffset   // reuses the same offset quaternion as the waist; give elbows their own if needed
-                );
+                    TrackerOffset);
             }
 
             Quaternion? trackerRot = TrackerManager.GetTrackerRotation(TrackerName.Value);
-
-            if (!trackerRot.HasValue)
-                return;
-
+            if (!trackerRot.HasValue) return;
             TrackerObject.transform.localRotation = trackerRot.Value;
         }
 
         private void OnGUI()
         {
-            if (!showUi)
-                return;
+            if (!showUi) return;
 
             InitializeStyles();
             DrawAnimatedBorder();
@@ -234,11 +251,11 @@ namespace MonkeRealism
         private void DrawWindow(int id)
         {
             GUILayout.Space(12);
-
             GUILayout.Label("MONKE REALISM", titleStyle);
             GUILayout.Space(2);
             GUILayout.Label("TRACKER CONFIG", labelSmallStyle);
 
+            // ── WAIST TRACKER ────────────────────────────────────────────
             DrawDivider();
 
             GUILayout.Space(6);
@@ -251,21 +268,15 @@ namespace MonkeRealism
             GUILayout.Space(4);
 
             trackerScroll = GUILayout.BeginScrollView(
-                    trackerScroll,
-                    false,
-                    false,
-                    GUIStyle.none,
-                    GUIStyle.none,
-                    scrollViewStyle,
-                    GUILayout.Height(160)
-            );
+                trackerScroll, false, false,
+                GUIStyle.none, GUIStyle.none,
+                scrollViewStyle, GUILayout.Height(120));
 
             foreach (string tracker in TrackerManager.GetTrackers())
             {
                 GUIStyle style = tracker == TrackerName.Value ? selectedButtonStyle : buttonStyle;
                 if (Button(tracker, style, GUILayout.Height(36)))
                     TrackerName.Value = tracker;
-
                 GUILayout.Space(3);
             }
 
@@ -277,11 +288,11 @@ namespace MonkeRealism
             GUILayout.Label("ROTATION OFFSET", labelSmallStyle);
             GUILayout.Space(6);
 
-            DrawAxisButtons(Vector3.right, "PITCH  X");
+            DrawAxisButtons(Vector3.right, "PITCH  X", ref TrackerOffset, SaveOffset);
             GUILayout.Space(4);
-            DrawAxisButtons(Vector3.up, "YAW    Y");
+            DrawAxisButtons(Vector3.up, "YAW    Y", ref TrackerOffset, SaveOffset);
             GUILayout.Space(4);
-            DrawAxisButtons(Vector3.forward, "ROLL   Z");
+            DrawAxisButtons(Vector3.forward, "ROLL   Z", ref TrackerOffset, SaveOffset);
 
             DrawDivider();
 
@@ -291,9 +302,9 @@ namespace MonkeRealism
             {
                 if (Button("START T-POSE CALIBRATION", buttonStyle, GUILayout.Height(44)))
                 {
-                    calibrationTimer   = 3f;
+                    calibrationTimer = 3f;
                     displayedCountdown = 3;
-                    calibrating        = true;
+                    calibrating = true;
                 }
             }
             else
@@ -306,9 +317,10 @@ namespace MonkeRealism
             GUILayout.Space(6);
 
             Vector3 euler = TrackerObject.transform.eulerAngles;
-
-            GUILayout.Label("LIVE ROTATION", labelSmallStyle);
+            GUILayout.Label("CHEST LIVE ROTATION", labelSmallStyle);
             GUILayout.Space(4);
+
+            DrawDivider();
 
             GUILayout.BeginHorizontal();
             DrawRotationBadge("X", euler.x);
@@ -317,34 +329,64 @@ namespace MonkeRealism
             GUILayout.Space(4);
             DrawRotationBadge("Z", euler.z);
             GUILayout.EndHorizontal();
-            
-            GUILayout.Space(8);
 
-            string trackingText =
-                    ShouldUseTracker.Value
-                            ? "TRACKING ENABLED"
-                            : "TRACKING DISABLED";
+            GUILayout.Space(6);
+            GUILayout.Label("LEFT ELBOW LIVE ROTATION", labelSmallStyle);
+            GUILayout.Space(4);
 
-            GUIStyle toggleStyle =
-                    ShouldUseTracker.Value
-                            ? selectedButtonStyle
-                            : buttonStyle;
+            Quaternion? leftElbowRot = TrackerManager.GetTrackerRotation(LeftElbowTrackerName.Value);
+            Vector3 leftElbowEuler = leftElbowRot.HasValue
+                ? leftElbowRot.Value.eulerAngles
+                : Vector3.zero;
 
-            if (Button(
-                        trackingText,
-                        toggleStyle,
-                        GUILayout.Height(42)))
+            GUILayout.BeginHorizontal();
+            DrawRotationBadge("X", leftElbowEuler.x);
+            GUILayout.Space(4);
+            DrawRotationBadge("Y", leftElbowEuler.y);
+            GUILayout.Space(4);
+            DrawRotationBadge("Z", leftElbowEuler.z);
+            GUILayout.EndHorizontal();
+
+           // GUILayout.Space(8);
+
+            GUILayout.Space(6);
+            GUILayout.Label("RIGHT ELBOW LIVE ROTATION", labelSmallStyle);
+            GUILayout.Space(4);
+
+            Quaternion? rightElbowRot = TrackerManager.GetTrackerRotation(RightElbowTrackerName.Value);
+            Vector3 rightElbowEuler = rightElbowRot.HasValue
+                ? rightElbowRot.Value.eulerAngles
+                : Vector3.zero;
+
+            GUILayout.BeginHorizontal();
+            DrawRotationBadge("X", rightElbowEuler.x);
+            GUILayout.Space(4);
+            DrawRotationBadge("Y", rightElbowEuler.y);
+            GUILayout.Space(4);
+            DrawRotationBadge("Z", rightElbowEuler.z);
+            GUILayout.EndHorizontal();
+
+           GUILayout.Space(6);
+
+            DrawDivider();
+
+            string trackingText = ShouldUseTracker.Value ? "TRACKING ENABLED" : "TRACKING DISABLED";
+            GUIStyle toggleStyle = ShouldUseTracker.Value ? selectedButtonStyle : buttonStyle;
+
+            if (Button(trackingText, toggleStyle, GUILayout.Height(42)))
             {
                 ShouldUseTracker.Value = !ShouldUseTracker.Value;
                 Config.Save();
             }
 
+            // ── ELBOW TRACKING ───────────────────────────────────────────
             DrawDivider();
+
             GUILayout.Space(6);
             GUILayout.Label("ELBOW TRACKING", labelSmallStyle);
             GUILayout.Space(4);
 
-            string elbowText  = ShouldUseElbowTracking.Value ? "ELBOWS ENABLED" : "ELBOWS DISABLED";
+            string elbowText = ShouldUseElbowTracking.Value ? "ELBOWS ENABLED" : "ELBOWS DISABLED";
             GUIStyle elbowStyle = ShouldUseElbowTracking.Value ? selectedButtonStyle : buttonStyle;
 
             if (Button(elbowText, elbowStyle, GUILayout.Height(42)))
@@ -353,15 +395,88 @@ namespace MonkeRealism
                 Config.Save();
             }
 
+            // ── LEFT ELBOW ───────────────────────────────────────────────
+            DrawDivider();
+
             GUILayout.Space(6);
-            GUILayout.Label("LEFT ELBOW", labelSmallStyle);
+            GUILayout.Label("LEFT ELBOW TRACKER", labelSmallStyle);
             GUILayout.Space(4);
             GUILayout.Label(LeftElbowTrackerName.Value, labelStyle);
+
             GUILayout.Space(6);
-            GUILayout.Label("RIGHT ELBOW", labelSmallStyle);
+            GUILayout.Label("SELECT LEFT ELBOW", labelSmallStyle);
+            GUILayout.Space(4);
+
+            leftElbowScroll = GUILayout.BeginScrollView(
+                leftElbowScroll, false, false,
+                GUIStyle.none, GUIStyle.none,
+                scrollViewStyle, GUILayout.Height(100));
+
+            foreach (string tracker in TrackerManager.GetTrackers())
+            {
+                GUIStyle style = tracker == LeftElbowTrackerName.Value ? selectedButtonStyle : buttonStyle;
+                if (Button(tracker, style, GUILayout.Height(36)))
+                {
+                    LeftElbowTrackerName.Value = tracker;
+                    Config.Save();
+                }
+                GUILayout.Space(3);
+            }
+
+            GUILayout.EndScrollView();
+
+            GUILayout.Space(6);
+            GUILayout.Label("LEFT ELBOW OFFSET", labelSmallStyle);
+            GUILayout.Space(4);
+
+            DrawAxisButtons(Vector3.right, "PITCH  X", ref LeftElbowOffset, SaveLeftElbowOffset);
+            GUILayout.Space(4);
+            DrawAxisButtons(Vector3.up, "YAW    Y", ref LeftElbowOffset, SaveLeftElbowOffset);
+            GUILayout.Space(4);
+            DrawAxisButtons(Vector3.forward, "ROLL   Z", ref LeftElbowOffset, SaveLeftElbowOffset);
+
+            // ── RIGHT ELBOW ──────────────────────────────────────────────
+            DrawDivider();
+
+            GUILayout.Space(6);
+            GUILayout.Label("RIGHT ELBOW TRACKER", labelSmallStyle);
             GUILayout.Space(4);
             GUILayout.Label(RightElbowTrackerName.Value, labelStyle);
-            
+
+            GUILayout.Space(6);
+            GUILayout.Label("SELECT RIGHT ELBOW", labelSmallStyle);
+            GUILayout.Space(4);
+
+            rightElbowScroll = GUILayout.BeginScrollView(
+                rightElbowScroll, false, false,
+                GUIStyle.none, GUIStyle.none,
+                scrollViewStyle, GUILayout.Height(100));
+
+            foreach (string tracker in TrackerManager.GetTrackers())
+            {
+                GUIStyle style = tracker == RightElbowTrackerName.Value ? selectedButtonStyle : buttonStyle;
+                if (Button(tracker, style, GUILayout.Height(36)))
+                {
+                    RightElbowTrackerName.Value = tracker;
+                    Config.Save();
+                }
+                GUILayout.Space(3);
+            }
+
+            GUILayout.EndScrollView();
+
+            GUILayout.Space(6);
+            GUILayout.Label("RIGHT ELBOW OFFSET", labelSmallStyle);
+            GUILayout.Space(4);
+
+            DrawAxisButtons(Vector3.right, "PITCH  X", ref RightElbowOffset, SaveRightElbowOffset);
+            GUILayout.Space(4);
+            DrawAxisButtons(Vector3.up, "YAW    Y", ref RightElbowOffset, SaveRightElbowOffset);
+            GUILayout.Space(4);
+            DrawAxisButtons(Vector3.forward, "ROLL   Z", ref RightElbowOffset, SaveRightElbowOffset);
+
+            DrawDivider();
+
             GUILayout.Space(10);
             GUILayout.Label($"TRACKERS ONLINE  {TrackerManager.GetTrackers().Count}", labelSmallStyle);
             GUILayout.Space(10);
@@ -369,7 +484,8 @@ namespace MonkeRealism
             GUI.DragWindow(new Rect(0, 0, 9999, 9999));
         }
 
-        private void DrawAxisButtons(Vector3 axis, string label)
+        // Overloaded to accept which offset quaternion and which save method to use
+        private void DrawAxisButtons(Vector3 axis, string label, ref Quaternion offset, System.Action saveAction)
         {
             GUILayout.Label(label, labelSmallStyle);
             GUILayout.Space(3);
@@ -377,16 +493,16 @@ namespace MonkeRealism
 
             if (Button("− 10°", buttonStyle, GUILayout.Height(32)))
             {
-                TrackerOffset = Quaternion.AngleAxis(-10f, axis) * TrackerOffset;
-                SaveOffset();
+                offset = Quaternion.AngleAxis(-10f, axis) * offset;
+                saveAction();
             }
 
             GUILayout.Space(4);
 
             if (Button("+ 10°", buttonStyle, GUILayout.Height(32)))
             {
-                TrackerOffset = Quaternion.AngleAxis(10f, axis) * TrackerOffset;
-                SaveOffset();
+                offset = Quaternion.AngleAxis(10f, axis) * offset;
+                saveAction();
             }
 
             GUILayout.EndHorizontal();
@@ -396,7 +512,7 @@ namespace MonkeRealism
         private void DrawRotationBadge(string axis, float value)
         {
             GUILayout.BeginVertical(GUILayout.Width(82));
-            GUILayout.Label(axis,                                                      labelSmallStyle);
+            GUILayout.Label(axis, labelSmallStyle);
             GUILayout.Label(Mathf.Round(value).ToString(CultureInfo.InvariantCulture), labelStyle);
             GUILayout.EndVertical();
         }
@@ -405,7 +521,7 @@ namespace MonkeRealism
         {
             GUILayout.Space(8);
             Rect r = GUILayoutUtility.GetRect(0, 1, GUILayout.ExpandWidth(true));
-            r.x     += 10;
+            r.x += 10;
             r.width -= 20;
             GUI.DrawTexture(r, texDivider);
             GUILayout.Space(8);
@@ -414,36 +530,62 @@ namespace MonkeRealism
         private bool Button(string text, GUIStyle style, params GUILayoutOption[] options)
         {
             bool pressed = GUILayout.Button(text, style, options);
-
             if (pressed && !text.ToLower().Contains("calibration"))
                 PlaySound(pressSound);
-
             return pressed;
+        }
+
+        private void SaveOffset()
+        {
+            offsetX.Value = TrackerOffset.x;
+            offsetY.Value = TrackerOffset.y;
+            offsetZ.Value = TrackerOffset.z;
+            offsetW.Value = TrackerOffset.w;
+            Config.Save();
+            TrackerFollower.transform.localRotation = TrackerOffset;
+        }
+
+        private void SaveLeftElbowOffset()
+        {
+            leftElbowOffsetX.Value = LeftElbowOffset.x;
+            leftElbowOffsetY.Value = LeftElbowOffset.y;
+            leftElbowOffsetZ.Value = LeftElbowOffset.z;
+            leftElbowOffsetW.Value = LeftElbowOffset.w;
+            Config.Save();
+        }
+
+        private void SaveRightElbowOffset()
+        {
+            rightElbowOffsetX.Value = RightElbowOffset.x;
+            rightElbowOffsetY.Value = RightElbowOffset.y;
+            rightElbowOffsetZ.Value = RightElbowOffset.z;
+            rightElbowOffsetW.Value = RightElbowOffset.w;
+            Config.Save();
         }
 
         private void DrawAnimatedBorder()
         {
-            float x         = windowRect.x;
-            float y         = windowRect.y;
-            float w         = windowRect.width;
-            float h         = windowRect.height;
-            float perimeter = 2f          * (w + h);
-            float dashLen   = perimeter   * 0.18f;
-            float head      = borderPhase * perimeter;
+            float x = windowRect.x;
+            float y = windowRect.y;
+            float w = windowRect.width;
+            float h = windowRect.height;
+            float perimeter = 2f * (w + h);
+            float dashLen = perimeter * 0.18f;
+            float head = borderPhase * perimeter;
 
             for (int dash = 0; dash < 3; dash++)
             {
                 float from = (head - dash * (perimeter * 0.33f) + perimeter) % perimeter;
-                float t    = dash                                            / 3f;
+                float t = dash / 3f;
                 Color colA = Color.Lerp(ColAccent1, ColAccent2, t);
                 Color colB = Color.Lerp(ColAccent2, ColAccent1, t);
 
                 for (int i = 0; i < BorderSteps; i++)
                 {
-                    int   idx   = dash * BorderSteps + i;
-                    float tLerp = (float)i                                          / BorderSteps;
-                    float d0    = (from + dashLen * tLerp)                          % perimeter;
-                    float d1    = (from + dashLen * ((float)(i + 1) / BorderSteps)) % perimeter;
+                    int idx = dash * BorderSteps + i;
+                    float tLerp = (float)i / BorderSteps;
+                    float d0 = (from + dashLen * tLerp) % perimeter;
+                    float d1 = (from + dashLen * ((float)(i + 1) / BorderSteps)) % perimeter;
 
                     Color col = Color.Lerp(colA, colB, tLerp);
                     col.a = Mathf.Sin(tLerp * Mathf.PI) * 0.9f + 0.1f;
@@ -452,8 +594,7 @@ namespace MonkeRealism
                     {
                         borderColors[idx] = col;
                         if (borderTextures[idx] == null)
-                            borderTextures[idx] = new Texture2D(1, 1) { wrapMode = TextureWrapMode.Clamp, };
-
+                            borderTextures[idx] = new Texture2D(1, 1) { wrapMode = TextureWrapMode.Clamp };
                         borderTextures[idx].SetPixel(0, 0, col);
                         borderTextures[idx].Apply();
                     }
@@ -475,17 +616,8 @@ namespace MonkeRealism
             float maxX = Mathf.Max(p0.x, p1.x) + BorderWidth * 0.5f;
             float maxY = Mathf.Max(p0.y, p1.y) + BorderWidth * 0.5f;
 
-            if (maxX - minX < BorderWidth)
-            {
-                minX = p0.x - BorderWidth * 0.5f;
-                maxX = minX + BorderWidth;
-            }
-
-            if (maxY - minY < BorderWidth)
-            {
-                minY = p0.y - BorderWidth * 0.5f;
-                maxY = minY + BorderWidth;
-            }
+            if (maxX - minX < BorderWidth) { minX = p0.x - BorderWidth * 0.5f; maxX = minX + BorderWidth; }
+            if (maxY - minY < BorderWidth) { minY = p0.y - BorderWidth * 0.5f; maxY = minY + BorderWidth; }
 
             return new Rect(minX, minY, maxX - minX, maxY - minY);
         }
@@ -493,16 +625,12 @@ namespace MonkeRealism
         private Vector2 PerimeterPoint(float x, float y, float w, float h, float perimeter, float d)
         {
             d = (d % perimeter + perimeter) % perimeter;
-
             if (d < w) return new Vector2(x + d, y);
             d -= w;
-
             if (d < h) return new Vector2(x + w, y + d);
             d -= h;
-
             if (d < w) return new Vector2(x + w - d, y + h);
             d -= w;
-
             return new Vector2(x, y + h - d);
         }
 
@@ -511,174 +639,99 @@ namespace MonkeRealism
             if (stylesInitialized) return;
             stylesInitialized = true;
 
-            texBackground  = MakeTex(ColBackground);
-            texSurface     = MakeTex(ColSurface);
-            texSelected    = MakeTex(ColSelected);
-            texHover       = MakeTex(new Color(0.22f, 0.22f, 0.28f, 1f));
-            texActive      = MakeTex(new Color(0.16f, 0.45f, 0.90f, 1f));
-            texTransparent = MakeTex(new Color(0f,    0f,    0f,    0f));
-            texDivider     = MakeTex(new Color(0.25f, 0.25f, 0.35f, 0.6f));
+            texBackground = MakeTex(ColBackground);
+            texSurface = MakeTex(ColSurface);
+            texSelected = MakeTex(ColSelected);
+            texHover = MakeTex(new Color(0.22f, 0.22f, 0.28f, 1f));
+            texActive = MakeTex(new Color(0.16f, 0.45f, 0.90f, 1f));
+            texTransparent = MakeTex(new Color(0f, 0f, 0f, 0f));
+            texDivider = MakeTex(new Color(0.25f, 0.25f, 0.35f, 0.6f));
 
             windowStyle = new GUIStyle
             {
-                    normal =
-                    {
-                            background = texBackground,
-                    },
-                    padding = new RectOffset(14, 14, 10, 14),
-                    border  = new RectOffset(0,  0,  0,  0),
+                normal = { background = texBackground },
+                padding = new RectOffset(14, 14, 10, 14),
+                border = new RectOffset(0, 0, 0, 0),
             };
 
             titleStyle = new GUIStyle
             {
-                    font      = titleFont,
-                    fontSize  = 22,
-                    fontStyle = FontStyle.Bold,
-                    normal    = { textColor = ColText, },
-                    alignment = TextAnchor.MiddleCenter,
-                    richText  = true,
+                font = titleFont,
+                fontSize = 22,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = ColText },
+                alignment = TextAnchor.MiddleCenter,
+                richText = true,
             };
 
             labelSmallStyle = new GUIStyle
             {
-                    font      = mainFont,
-                    fontSize  = 11,
-                    normal    = { textColor = ColSubtext, },
-                    alignment = TextAnchor.MiddleLeft,
-                    richText  = true,
+                font = mainFont,
+                fontSize = 11,
+                normal = { textColor = ColSubtext },
+                alignment = TextAnchor.MiddleLeft,
+                richText = true,
             };
 
             labelStyle = new GUIStyle
             {
-                    font      = mainFont,
-                    fontSize  = 18,
-                    fontStyle = FontStyle.Bold,
-                    normal    = { textColor = ColText, },
-                    alignment = TextAnchor.MiddleLeft,
-                    richText  = true,
+                font = mainFont,
+                fontSize = 18,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = ColText },
+                alignment = TextAnchor.MiddleLeft,
+                richText = true,
             };
 
             buttonStyle = new GUIStyle
             {
-                    font      = mainFont,
-                    fontSize  = 14,
-                    fontStyle = FontStyle.Bold,
-                    normal =
-                    {
-                            background = texSurface,
-                            textColor  = ColText,
-                    },
-                    hover =
-                    {
-                            background = texHover,
-                            textColor  = ColAccentHover,
-                    },
-                    active =
-                    {
-                            background = texActive,
-                            textColor  = Color.white,
-                    },
-                    focused =
-                    {
-                            background = texSurface,
-                            textColor  = ColText,
-                    },
-                    onNormal =
-                    {
-                            background = texSurface,
-                            textColor  = ColText,
-                    },
-                    onHover =
-                    {
-                            background = texHover,
-                            textColor  = ColAccentHover,
-                    },
-                    onActive =
-                    {
-                            background = texActive,
-                            textColor  = Color.white,
-                    },
-                    onFocused =
-                    {
-                            background = texSurface,
-                            textColor  = ColText,
-                    },
-                    alignment = TextAnchor.MiddleCenter,
-                    border    = new RectOffset(0,  0,  0, 0),
-                    padding   = new RectOffset(10, 10, 6, 6),
+                font = mainFont,
+                fontSize = 14,
+                fontStyle = FontStyle.Bold,
+                normal = { background = texSurface, textColor = ColText },
+                hover = { background = texHover, textColor = ColAccentHover },
+                active = { background = texActive, textColor = Color.white },
+                focused = { background = texSurface, textColor = ColText },
+                onNormal = { background = texSurface, textColor = ColText },
+                onHover = { background = texHover, textColor = ColAccentHover },
+                onActive = { background = texActive, textColor = Color.white },
+                onFocused = { background = texSurface, textColor = ColText },
+                alignment = TextAnchor.MiddleCenter,
+                border = new RectOffset(0, 0, 0, 0),
+                padding = new RectOffset(10, 10, 6, 6),
             };
 
             selectedButtonStyle = new GUIStyle(buttonStyle)
             {
-                    normal =
-                    {
-                            background = texSelected,
-                            textColor  = Color.white,
-                    },
-                    hover =
-                    {
-                            background = texSelected,
-                            textColor  = Color.white,
-                    },
-                    active =
-                    {
-                            background = texActive,
-                            textColor  = Color.white,
-                    },
-                    onNormal =
-                    {
-                            background = texSelected,
-                            textColor  = Color.white,
-                    },
-                    onHover =
-                    {
-                            background = texSelected,
-                            textColor  = Color.white,
-                    },
-                    onActive =
-                    {
-                            background = texActive,
-                            textColor  = Color.white,
-                    },
+                normal = { background = texSelected, textColor = Color.white },
+                hover = { background = texSelected, textColor = Color.white },
+                active = { background = texActive, textColor = Color.white },
+                onNormal = { background = texSelected, textColor = Color.white },
+                onHover = { background = texSelected, textColor = Color.white },
+                onActive = { background = texActive, textColor = Color.white },
             };
 
             scrollViewStyle = new GUIStyle
             {
-                    normal =
-                    {
-                            background = texTransparent,
-                    },
+                normal = { background = texTransparent },
             };
         }
 
         private Texture2D MakeTex(Color col)
         {
-            Texture2D tex = new Texture2D(1, 1) { wrapMode = TextureWrapMode.Clamp, };
+            Texture2D tex = new Texture2D(1, 1) { wrapMode = TextureWrapMode.Clamp };
             tex.SetPixel(0, 0, col);
             tex.Apply();
-
             return tex;
-        }
-
-        private void SaveOffset()
-        {
-            offsetX.Value = TrackerOffset.x;
-            offsetY.Value = TrackerOffset.y;
-            offsetZ.Value = TrackerOffset.z;
-            offsetW.Value = TrackerOffset.w;
-            Config.Save();
-
-            TrackerFollower.transform.localRotation = TrackerOffset;
         }
 
         private void PlaySound(AudioClip clip)
         {
             if (source == null)
             {
-                source             = new GameObject("MonkeRealismAudioSource").AddComponent<AudioSource>();
+                source = new GameObject("MonkeRealismAudioSource").AddComponent<AudioSource>();
                 source.playOnAwake = false;
             }
-
             source.PlayOneShot(clip);
         }
     }

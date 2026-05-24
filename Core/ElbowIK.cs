@@ -11,7 +11,7 @@ namespace MonkeRealism.Core
     public static class ElbowIK
     {
         // Arm segment ratios — upper arm is slightly shorter than forearm
-        private const float UpperArmRatio      = 0.48f;
+        public const float UpperArmRatio      = 0.48f;
         private const float ForearmRatio        = 0.52f;
         // How much the physical tracker position pulls the IK elbow vs the pure math solution
         private const float TrackerDirectWeight = 0.85f;

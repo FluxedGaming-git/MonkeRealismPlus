@@ -5,11 +5,7 @@
 		<GameAssemblyPath>$(GamePath)\Gorilla Tag_Data\Managed</GameAssemblyPath>
 		<BepInExAssemblyPath>$(GamePath)\BepInEx\core</BepInExAssemblyPath>
 		<PluginsPath>$(GamePath)\BepInEx\plugins</PluginsPath>
-	</PropertyGroup>
-	<PropertyGroup Condition="'$(CI)'=='TRUE'">
-		<GameAssemblyPath>.\Libs</GameAssemblyPath>
-		<BepInExAssemblyPath>.\Libs</BepInExAssemblyPath>
-		<PluginsPath>.\Libs</PluginsPath>
-		<WarningLevel>0</WarningLevel>
+		<LangVersion>9.0</LangVersion>
+		<GeneratedIgnoresAccessChecksToFile>$(MSBuildProjectDirectory)\obj\IgnoresAccessChecksTo.cs</GeneratedIgnoresAccessChecksToFile>
 	</PropertyGroup>
 </Project>
